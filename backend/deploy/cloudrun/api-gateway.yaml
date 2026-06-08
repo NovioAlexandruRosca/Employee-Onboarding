@@ -1,0 +1,39 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: api-gateway
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    spec:
+      containers:
+        - image: gcr.io/PROJECT_ID/api-gateway:latest
+          ports:
+            - containerPort: 8080
+          resources:
+            limits:
+              memory: 512Mi
+              cpu: "1"
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: latest
+            - name: JWT_ALGORITHM
+              value: HS256
+            - name: AUTH_SERVICE_URL
+              value: https://auth-service-HASH-uc.a.run.app
+            - name: HR_SERVICE_URL
+              value: https://hr-service-HASH-uc.a.run.app
+            - name: MANAGER_SERVICE_URL
+              value: https://manager-service-HASH-uc.a.run.app
+            - name: FINANCE_SERVICE_URL
+              value: https://finance-service-HASH-uc.a.run.app
+            - name: IT_SERVICE_URL
+              value: https://it-service-HASH-uc.a.run.app
+            - name: NOTIFIER_SERVICE_URL
+              value: https://notifier-service-HASH-uc.a.run.app
+            - name: NOTIFIER_SERVICE_WS_URL
+              value: wss://notifier-service-HASH-uc.a.run.app

@@ -1,0 +1,164 @@
+steps:
+  # ── Build & push all images ───────────────────────────────────────────────
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/auth-service:${_TAG}", "./auth-service"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/auth-service:${_TAG}"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/api-gateway:${_TAG}", "./api-gateway"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/api-gateway:${_TAG}"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/hr-service:${_TAG}", "./hr-service"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/hr-service:${_TAG}"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/manager-service:${_TAG}", "./manager-service"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/manager-service:${_TAG}"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/finance-service:${_TAG}", "./finance-service"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/finance-service:${_TAG}"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/it-service:${_TAG}", "./it-service"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/it-service:${_TAG}"]
+
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["build", "-t", "gcr.io/$PROJECT_ID/notifier-service:${_TAG}", "./notifier-service"]
+  - name: "gcr.io/cloud-builders/docker"
+    args: ["push", "gcr.io/$PROJECT_ID/notifier-service:${_TAG}"]
+
+  # notifier no dependencies
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud run deploy notifier-service \
+          --image=gcr.io/$PROJECT_ID/notifier-service:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --set-secrets=JWT_SECRET=jwt-secret:latest,INTERNAL_SECRET=internal-secret:latest \
+          --set-env-vars=JWT_ALGORITHM=HS256
+
+  # auth no other dependencies
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        SQL_INST=$$(echo "$_SQL_INSTANCE" | tr -d '\r')
+        gcloud run deploy auth-service \
+          --image=gcr.io/$PROJECT_ID/auth-service:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --add-cloudsql-instances=$$SQL_INST \
+          --set-secrets=DATABASE_URL=auth-db-url:latest,JWT_SECRET=jwt-secret:latest \
+          --set-env-vars=JWT_ALGORITHM=HS256,JWT_EXPIRY_HOURS=24
+
+  # hr-service needs notifier
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        SQL_INST=$$(echo "$_SQL_INSTANCE" | tr -d '\r')
+        NOTIFIER_URL=$$(gcloud run services describe notifier-service \
+          --region=$_REGION --format="value(status.url)")
+        gcloud run deploy hr-service \
+          --image=gcr.io/$PROJECT_ID/hr-service:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --add-cloudsql-instances=$$SQL_INST \
+          --set-secrets=DATABASE_URL=hr-db-url:latest,JWT_SECRET=jwt-secret:latest,INTERNAL_SECRET=internal-secret:latest \
+          --set-env-vars=JWT_ALGORITHM=HS256,NOTIFIER_SERVICE_URL=$$NOTIFIER_URL
+
+  # manager, finance, it need hr url
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        SQL_INST=$$(echo "$_SQL_INSTANCE" | tr -d '\r')
+        HR_URL=$$(gcloud run services describe hr-service \
+          --region=$_REGION --format="value(status.url)")
+
+        gcloud run deploy manager-service \
+          --image=gcr.io/$PROJECT_ID/manager-service:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --add-cloudsql-instances=$$SQL_INST \
+          --set-secrets=DATABASE_URL=manager-db-url:latest,JWT_SECRET=jwt-secret:latest,INTERNAL_SECRET=internal-secret:latest \
+          --set-env-vars=JWT_ALGORITHM=HS256,HR_SERVICE_URL=$$HR_URL
+
+        gcloud run deploy finance-service \
+          --image=gcr.io/$PROJECT_ID/finance-service:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --add-cloudsql-instances=$$SQL_INST \
+          --set-secrets=DATABASE_URL=finance-db-url:latest,JWT_SECRET=jwt-secret:latest,INTERNAL_SECRET=internal-secret:latest \
+          --set-env-vars=JWT_ALGORITHM=HS256,HR_SERVICE_URL=$$HR_URL
+
+        gcloud run deploy it-service \
+          --image=gcr.io/$PROJECT_ID/it-service:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --no-allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --add-cloudsql-instances=$$SQL_INST \
+          --set-secrets=DATABASE_URL=it-db-url:latest,JWT_SECRET=jwt-secret:latest,INTERNAL_SECRET=internal-secret:latest \
+          --set-env-vars=JWT_ALGORITHM=HS256,HR_SERVICE_URL=$$HR_URL
+
+  # api gateway needs all the other services
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        desc() { gcloud run services describe "$$1" --region=$_REGION --format="value(status.url)"; }
+        AUTH_URL=$$(desc auth-service)
+        HR_URL=$$(desc hr-service)
+        MANAGER_URL=$$(desc manager-service)
+        FINANCE_URL=$$(desc finance-service)
+        IT_URL=$$(desc it-service)
+        NOTIFIER_URL=$$(desc notifier-service)
+        NOTIFIER_WS_URL=$$(echo "$$NOTIFIER_URL" | sed 's|^https|wss|')
+
+        gcloud run deploy api-gateway \
+          --image=gcr.io/$PROJECT_ID/api-gateway:${_TAG} \
+          --region=$_REGION \
+          --platform=managed \
+          --allow-unauthenticated \
+          --service-account=$_SERVICE_ACCOUNT \
+          --set-secrets=JWT_SECRET=jwt-secret:latest \
+          --set-env-vars="JWT_ALGORITHM=HS256,AUTH_SERVICE_URL=$$AUTH_URL,HR_SERVICE_URL=$$HR_URL,MANAGER_SERVICE_URL=$$MANAGER_URL,FINANCE_SERVICE_URL=$$FINANCE_URL,IT_SERVICE_URL=$$IT_URL,NOTIFIER_SERVICE_URL=$$NOTIFIER_URL,NOTIFIER_SERVICE_WS_URL=$$NOTIFIER_WS_URL"
+
+substitutions:
+  _REGION: us-central1
+  _TAG: latest
+
+images:
+  - "gcr.io/$PROJECT_ID/auth-service:${_TAG}"
+  - "gcr.io/$PROJECT_ID/api-gateway:${_TAG}"
+  - "gcr.io/$PROJECT_ID/hr-service:${_TAG}"
+  - "gcr.io/$PROJECT_ID/manager-service:${_TAG}"
+  - "gcr.io/$PROJECT_ID/finance-service:${_TAG}"
+  - "gcr.io/$PROJECT_ID/it-service:${_TAG}"
+  - "gcr.io/$PROJECT_ID/notifier-service:${_TAG}"
